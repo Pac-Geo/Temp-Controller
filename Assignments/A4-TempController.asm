@@ -3,34 +3,51 @@
 ; Date: 3/7/26
 ; MPLAB Version: v6.30
 ;------------------------------------------------------------------------------
-; Program Vervsion: V3 
-; Patch notes of V; github test(added sleep)
+; Program Vervsion: V4 
+; Patch notes of V; Implemented another dependency and PSECT, worked on comments
 ; Purpose: Measure, Set and adjust temp accordingly.
 ; Inputs: Temperature readings
-; Outputs: PortD
-; Instructions:	DO NOT TOUCH
-; Dependencies:	<xc.inc>
+; Outputs: Outputs temp readings
+; Instructions:Input values under program mem 
+    ;On Reading the System results: 
+    //SYSTEM OFF
+	; contReg = 0
+	; PORTD1=0, 
+	; PORTD2=0 
+    //HEAT ON
+	; contReg = 2 
+	; PORTD1=0
+	; PORTD2=1 
+    //COOL ON
+	; contReg = 1
+	; PORTD1=1
+	; PORTD2=0  	
+; Dependencies:	<xc.inc>, <AssemblyConfig.inc>
     
 processor 18F47K42
 #include <xc.inc>
+#include "AssemblyConfig.inc"
+    
+PSECT absdata,abs,ovrld        ; Do not change
 
 ;----------------
 ; PROGRAM INPUTS
 ;----------------
-;The DEFINE directive is used to create macros or symbolic names for values.
-;It is more flexible and can be used to define complex expressions or sequences 
-;of instructions. It is processed by the preprocessor before assembly begins.
-
-#define  measuredTempInput  45	; this is the input value
-#define  refTempInput       25	; this is the input value
+    ;The DEFINE directive is used to create macros or symbolic names for values.
+    ;It is more flexible and can be used to define complex expressions or 
+    ;sequences of instructions. It is processed by the preprocessor before 
+    ;assembly begins.
+    
+    #define  refTempInput       15	; between +10 and +50 Degree celsius. 
+    #define  measuredTempInput  -5	;between -10 and +60 Degree Celsius
 
 ;---------------------
 ; Definitions
 ;---------------------
-#define SWITCH    LATD,2  
-#define LED0      PORTD,0
-#define LED1      PORTD,1
-    
+    #define SWITCH    LATD,2  
+    #define LED0      LATD,0
+    #define LED1      LATD,1
+
 ;---------------------
 ; Program Constants 
 ;---------------------
@@ -50,25 +67,22 @@ processor 18F47K42
     measTempReg  equ 21h   ; measuredTemp -> REG 0x21
     contReg      equ 22h   ; contReg -> REG 0x22
 
-;constants used for conversion
+    ;constants used for conversion
     count        equ 30h
     number       equ 31h
     tmp          equ 32h
 
-; BCD output constants
-; REF digits:
+    ; BCD output constants
+    ; REF digits:
     REF_ONES     equ 60h   ; ones digit of ref temp (ex: 44 -> 4)
     REF_TENS     equ 61h   ; tens digit of ref temp (ex: 44 -> 4)
     REF_HUND     equ 62h   ; hundreds digit (almost always 0 here)
 
-; MEASURED digits:
+    ; MEASURED digits:
     MEA_ONES     equ 70h
     MEA_TENS     equ 71h
     MEA_HUND     equ 72h
 
-;----------------------------
-; Jump to main when the PIC powers on, it begins at address 0x000
-;----------------------------
     org 0x000
     goto main
     
@@ -76,27 +90,32 @@ processor 18F47K42
 ; Main program starts at 0x20 
 ;----------------------------
     org 0x020	;R7 start from register 0x20 in the program memory.
-    
 main:
-; R6 Initialize PORTD ONLY as outputs and clear 
+    
+    ; R6 Initialize LATD ONLY as outputs and clear 
     banksel TRISD
-    clrf    TRISD	; make PORTD pins outputs
-    banksel PORTD
-    clrf    PORTD	; start with PORTD all OFF
+    clrf    TRISD	; make LATD pins outputs
+    
+   ;Copy into LatPortD
+    banksel ANSELD	;Analog Select Register for Port D
+    clrf    ANSELD      ; make PORTD pins digital
+    
+    banksel LATD
+    clrf    LATD	; start with LATD all OFF
     banksel LATD
     clrf    LATD	;clear latch
     
-; Put the ARBITRARY TEST values 
-    movlw   0x05	    ; refTemp  
+    ; Put the ARBITRARY TEST values 
+    movlw   refTempInput	    ; refTemp  
     banksel refTempReg
     movwf   refTempReg
     
-    movlw   0x06	    ; measuredTemp 
+    movlw   measuredTempInput	    ; measuredTemp 
     banksel measTempReg
     movwf   measTempReg
 
 ; ----------------------------
-; Perform comparison
+; Performs comparison
 ; ----------------------------
     banksel measTempReg
     btfsc   measTempReg, 7    ; if measured negative -> treat as HEAT
@@ -104,18 +123,19 @@ main:
     
     banksel refTempReg
     movf    refTempReg, W
+    banksel measTempReg
     subwf   measTempReg, W  ; W = measured - ref  (status bits set)
 
-;If measuredTemp = refTemp, Z=1, then set contReg=0 goto ledoff
+    ;If measuredTemp = refTemp, Z=1, then set contReg=0 goto ledoff
     btfsc   STATUS, 2	   
     goto    SET_EQUAL	    ;LED OFF 
 
-;If measuredTemp > refTemp then set contReg=2 
-;C=1 (no borrow) indicates measured > ref
+    ;If measuredTemp > refTemp then set contReg=2 
+    ;C=1 (no borrow) indicates measured > ref
     btfsc   STATUS, 0      
     goto    SET_COOL	    ;LED is HOT
 
-; Else measured < ref set contReg=1 
+    ; Else measured < ref set contReg=1 
     goto    SET_HEAT	    ;LED is COOL
     
 ; ----------------------------
@@ -129,15 +149,15 @@ SET_EQUAL:
     goto    LED_OFF
 
 SET_COOL:
-    ;set contReg=2
-    movlw   0x02
+    ;set contReg=1 (cooler is on) LATD2=1
+    movlw   0x01
     banksel contReg
     movwf   contReg
     goto    LED_COOL
 
 SET_HEAT:
-    ;set contReg=1
-    movlw   0x01
+    ;set contReg=2 (heater is on) LATD1=1
+    movlw   0x02
     banksel contReg
     movwf   contReg
     goto    LED_HOT
@@ -146,44 +166,36 @@ SET_HEAT:
 ; LED labels
 ; ----------------------------
 LED_COOL:
-    ;turn on PORTD2, turn off PORTD1
+    ;turn on LATD2, turn off LATD1
     ; TURN OFF hotAir
-    ; TURN OFF coolAir
+    ; TURN ON coolAir
     banksel LATD
-    bsf     SWITCH         ; set LATD,2 -> turns PORTD.2 output high
-    banksel PORTD
-    bcf     LED1           ; ensure HEAT (PORTD.1) is OFF
+    bsf     LED1        ; RD1 = 1
+    bcf     SWITCH      ; RD2 = 0
     goto    HEX_TO_DEC
 
 LED_HOT:
-    ;turn on PORTD1, turn off PORTD2
-    ; Display H, ?display? = set outputs
+    ;turn on LATD1, turn off LATD2
     ; TURN ON hotAir
     ; TURN OFF coolAir
-    banksel PORTD
-    bsf     LED1           ; set PORTD.1 -> HEAT ON
     banksel LATD
-    bcf     SWITCH         ; clear LATD,2 -> COOL OFF
+    bsf     SWITCH      ; RD2 = 1
+    bcf     LED1        ; RD1 = 0
     goto    HEX_TO_DEC
 
 LED_OFF:
     ; Display nothing & TURN OFF all
-    ;turn off both PORTDs
-    banksel PORTD
+    ;turn off both LATDs
+    banksel LATD
     bcf     LED1           ; HEAT OFF
     banksel LATD
     bcf     SWITCH         ; COOL OFF
     goto    HEX_TO_DEC
     
-;==========================================================
-;   refTempReg  -> 0x62(100s), 0x61(10s), 0x60(1s)
-;   measTempReg -> 0x72(100s), 0x71(10s), 0x70(1s)
-;==========================================================
-
+;-----------------------------
+; CONVERSION refTempReg -> REF_HUND/REF_TENS/REF_ONES
+;-----------------------------
 HEX_TO_DEC:
-;-----------------------------
-; Convert refTempReg -> REF_HUND/REF_TENS/REF_ONES
-;-----------------------------
     clrf    count
     movf    refTempReg, W
     movwf   number
@@ -209,12 +221,12 @@ Loop10sRef:
     movff   count, REF_TENS   ; 0x61
     movff   number, REF_ONES  ; 0x60
 ;-----------------------------
-; Convert measTempReg -> MEA_HUND/MEA_TENS/MEA_ONES
+;CONVERSION measTempReg -> MEA_HUND/MEA_TENS/MEA_ONES
 ;-----------------------------
     clrf    count
     movf    measTempReg, W
     movwf   number
-; abs(measuredTempReg) fro negative measurement vals
+    ; abs(measuredTempReg) fro negative measurement vals
     btfss   number, 7        ; if bit7 = 0, already positive
     goto    MeasPos
     comf    number, F        ; two's complement: invert
@@ -241,9 +253,10 @@ Loop10sMeas:
     movff   count, MEA_TENS	; 0x71
     movff   number, MEA_ONES	; 0x70
 
-    goto    ENDPROG           ; go back to your end/idle loop
+    goto    ENDPROG		; go back to your end/idle loop
    
 ENDPROG:
     sleep
-
-    end 
+    bra ENDPROG 
+    
+  
